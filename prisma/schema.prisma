@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ================= ENUMS =================
+
+enum OrderStatus {
+  CREATED
+  PACKED
+  PICKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  COD
+}
+
+enum DriverStatus {
+  AVAILABLE
+  ASSIGNED
+  ON_TRIP
+  OFFLINE
+}
+
+enum DriverRole {
+  PICKUP
+  DELIVERY
+}
+
+enum AssignmentType {
+  PICKUP
+  DELIVERY
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  PICKED
+  COMPLETED
+  CANCELLED
+}
+
+// ================= MODELS =================
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  address   String
+  phone     String
+
+  orders    Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Driver {
+  id        String        @id @default(uuid())
+  name      String
+  email     String        @unique
+  password  String
+
+  status    DriverStatus  @default(AVAILABLE)
+  role      DriverRole
+
+  lat       Float?
+  lng       Float?
+
+  assignments Assignment[]
+  trackingEvents TrackingEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model Order {
+  id               String         @id @default(uuid())
+  userId           String
+
+  status           OrderStatus    @default(CREATED)
+  paymentStatus    PaymentStatus  @default(PENDING)
+
+  pickupLat        Float
+  pickupLng        Float
+  deliveryLat      Float
+  deliveryLng      Float
+  
+  eta              DateTime?
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user             User           @relation(fields: [userId], references: [id])
+  assignments      Assignment[]
+  trackingEvents   TrackingEvent[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Assignment {
+  id        String            @id @default(uuid())
+  orderId   String
+  driverId  String
+
+  type      AssignmentType
+  status    AssignmentStatus @default(ASSIGNED)
+
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  order     Order            @relation(fields: [orderId], references: [id])
+  driver    Driver           @relation(fields: [driverId], references: [id])
+
+  @@index([orderId])
+  @@index([driverId])
+}
+
+model TrackingEvent {
+  id        String   @id @default(uuid())
+  orderId   String
+  driverId  String
+
+  lat       Float
+  lng       Float
+
+  timestamp DateTime @default(now())
+
+  order     Order    @relation(fields: [orderId], references: [id])
+  driver    Driver   @relation(fields: [driverId], references: [id])
+
+  @@index([orderId])
+  @@index([driverId])
+  @@index([timestamp])
+}
