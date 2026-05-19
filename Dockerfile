@@ -14,7 +14,7 @@ COPY prisma ./prisma
 RUN npx prisma generate && find generated/prisma -name '*.ts' -exec sed -i -e 's|\.ts"|.js"|g' -e "s|\.ts'|.js'|g" {} \;
 
 # Build the NestJS application
-COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY tsconfig.json tsconfig.build.json nest-cli.json prisma.config.ts ./
 COPY src ./src
 RUN npm run build
 
@@ -29,6 +29,8 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/generated ./generated
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package.json ./
 
 # No .env file — all env vars provided at runtime

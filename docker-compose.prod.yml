@@ -1,0 +1,97 @@
+# Step 2A: Production Docker Compose (without Nginx)
+# Backend port 3000 is exposed temporarily for local testing.
+# Production will later put Nginx in front and use a .env.production file.
+
+services:
+  postgres-app:
+    image: postgres:16
+    container_name: logistics-postgres-app
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: logistics_app
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_app_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d logistics_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  postgis-osm:
+    image: postgis/postgis:16-3.4
+    container_name: logistics-postgis-osm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: osm
+      POSTGRES_PASSWORD: osm
+      POSTGRES_DB: osm_india
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgis_osm_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osm -d osm_india"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: logistics-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prisma-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logistics-prisma-migrate
+    restart: "no"
+    depends_on:
+      postgres-app:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres-app:5432/logistics_app
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logistics-backend
+    restart: unless-stopped
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+      postgis-osm:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://postgres:postgres@postgres-app:5432/logistics_app
+      OSM_DATABASE_URL: postgresql://osm:osm@postgis-osm:5432/osm_india
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: replace_with_secure_random_secret_for_local_compose
+      CORS_ORIGINS: http://localhost:5173
+      OSRM_URL: https://router.project-osrm.org
+      ENABLE_TRACKING_SIMULATOR: "true"
+
+volumes:
+  postgres_app_data:
+  postgis_osm_data:
