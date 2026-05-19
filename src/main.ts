@@ -6,11 +6,20 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  const corsOrigins = configService.get<string>('CORS_ORIGINS')?.split(',').map(s => s.trim()) || [];
-  console.log(corsOrigins);
+
+  const env = configService.get<string>('NODE_ENV', 'development');
+  const rawOrigins = configService.get<string>('CORS_ORIGINS', '');
+  let corsOrigins: string[];
+  if (rawOrigins && rawOrigins !== '*') {
+    corsOrigins = rawOrigins.split(',').map((s) => s.trim());
+  } else {
+    corsOrigins = env === 'production'
+      ? []
+      : ['http://localhost:5173', 'http://127.0.0.1:5500'];
+  }
 
   app.enableCors({
-    origin: corsOrigins,
+    origin: corsOrigins.length > 0 ? corsOrigins : false,
     credentials: true,
   });
 

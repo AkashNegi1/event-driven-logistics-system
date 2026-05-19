@@ -58,3 +58,5 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 /generated/prisma
 
 india-260509.osm.pbf
+
+osm-data

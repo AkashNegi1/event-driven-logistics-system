@@ -1,6 +1,7 @@
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
@@ -23,13 +24,14 @@ interface TrackingSocketData {
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
-    pingInterval: 10000,
-    pingTimeout: 5000,
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    credentials: true,
   },
+  pingInterval: 10000,
+  pingTimeout: 5000,
 })
 export class TrackingGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit
 {
   @WebSocketServer()
   server: Server;
@@ -41,6 +43,24 @@ export class TrackingGateway
 
   private driverSubscriptions = new Map<string, boolean>();
   private driverOrdersMap = new Map<string, Set<string>>();
+
+  afterInit(_server: Server) {
+    const env = this.configService.get<string>('NODE_ENV', 'development');
+    const rawOrigins = this.configService.get<string>('CORS_ORIGINS', '');
+    let origins: string[];
+    if (rawOrigins && rawOrigins !== '*') {
+      origins = rawOrigins.split(',').map((s) => s.trim());
+    } else {
+      origins = env === 'production'
+        ? []
+        : ['http://localhost:5173', 'http://127.0.0.1:5500'];
+    }
+    (this.server as any).opts.cors = {
+      origin: origins.length > 0 ? origins : false,
+      credentials: true,
+    };
+  }
+
   async handleConnection(client: Socket) {
     const orderId = client.handshake.query.orderId as string;
     if (!orderId) {
@@ -52,6 +72,9 @@ export class TrackingGateway
 
     console.log(`Client Connected for orderId: ${orderId}`);
 
+    const data = client.data as TrackingSocketData;
+    data.orderId = orderId;
+
     const assignment = await this.prismaService.assignment.findFirst({
       where: {
         orderId,
@@ -60,7 +83,11 @@ export class TrackingGateway
     });
 
     if (!assignment) {
-      client.disconnect();
+      client.emit('trackingStatus', {
+        orderId,
+        status: 'WAITING_FOR_DRIVER',
+        message: 'Waiting for driver assignment',
+      });
       return;
     }
 
@@ -93,8 +120,6 @@ export class TrackingGateway
         });
       }
     }
-    const data = client.data as TrackingSocketData;
-
     data.driverId = driverId;
     data.orderId = orderId;
 
@@ -122,10 +147,12 @@ export class TrackingGateway
   }
 
   async handleDisconnect(client: Socket) {
-    const data = client.data as TrackingSocketData;
+    const socketData = client.data as TrackingSocketData;
 
-    const driverId = data.driverId;
-    const orderId = data.orderId;
+    const driverId = socketData.driverId;
+    const orderId = socketData.orderId;
+
+    console.log(`Client disconnected for orderId: ${orderId}`);
 
     if (!driverId || !orderId) return;
 
@@ -133,24 +160,18 @@ export class TrackingGateway
 
     if (!orderSet) return;
 
-    // 🧹 Remove this order from driver mapping
     orderSet.delete(orderId);
 
-    console.log(`Client disconnected for orderId: ${orderId}`);
-
-    // 🚨 If no more orders for this driver
     if (orderSet.size === 0) {
       console.log(`No more clients for driver ${driverId}, cleaning up...`);
-
-      // remove driver entry
       this.driverOrdersMap.delete(driverId);
-
-      // unsubscribe from Redis
       const channel = `driver:${driverId}`;
       await this.redisService.unsubscribe(channel);
-
-      // remove subscription flag
       this.driverSubscriptions.delete(driverId);
     }
+  }
+
+  emitToOrderRoom(orderId: string, event: string, payload: any): void {
+    this.server.to(orderId).emit(event, payload);
   }
 }
