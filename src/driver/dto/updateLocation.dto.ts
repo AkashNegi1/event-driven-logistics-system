@@ -1,6 +1,10 @@
-import { IsNumber } from 'class-validator';
+import { IsNumber, IsString } from 'class-validator';
 
 export class UpdateLocationDto {
+
+  @IsString()
+  driverId: string;
+
   @IsNumber()
   lat: number;
 
