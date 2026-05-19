@@ -11,6 +11,24 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+  
+  postgres-osm:
+    image: postgis/postgis:16-3.4
+    container_name: logistics-osm-db
+    restart: always
+    environment:
+      POSTGRES_USER: osm
+      POSTGRES_PASSWORD: osm
+      POSTGRES_DB: osm_india
+    ports:
+      - "5433:5432"
+    volumes:
+      - osm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osm -d osm_india"]
+      interval: 10s
+      timeout: 5s
+      retries: 5 
 
   redis:
     image: redis:7
@@ -19,5 +37,91 @@ services:
     ports:
       - "6379:6379"
 
+  osm-places-importer:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.import-osm-places
+    container_name: logistics-osm-importer
+    volumes:
+      - ./osm-data:/data
+    environment:
+      OSM_DB_NAME: osm_india
+      OSM_DB_USER: osm
+      OSM_DB_PASSWORD: osm
+      OSM_DB_HOST: postgres-osm
+      OSM_DB_PORT: "5432"
+      PBF_PATH: /data/india.osm.pbf
+    depends_on:
+      postgres-osm:
+        condition: service_healthy
+    restart: "no"
+
+  osm-roads-importer:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.import-osm-places
+    container_name: logistics-osm-roads-importer
+    entrypoint: ["python"]
+    command: ["/import-osm-roads.py"]
+    volumes:
+      - ./osm-data:/data
+      - ./scripts/import-osm-roads.py:/import-osm-roads.py
+    environment:
+      OSM_DB_NAME: osm_india
+      OSM_DB_USER: osm
+      OSM_DB_PASSWORD: osm
+      OSM_DB_HOST: postgres-osm
+      OSM_DB_PORT: "5432"
+      PBF_PATH: /data/india.osm.pbf
+    depends_on:
+      postgres-osm:
+        condition: service_healthy
+    restart: "no"
+
+  osm-pois-importer:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.import-osm-places
+    container_name: logistics-osm-pois-importer
+    entrypoint: ["python"]
+    command: ["/import-osm-pois.py"]
+    volumes:
+      - ./osm-data:/data
+      - ./scripts/import-osm-pois.py:/import-osm-pois.py
+    environment:
+      OSM_DB_NAME: osm_india
+      OSM_DB_USER: osm
+      OSM_DB_PASSWORD: osm
+      OSM_DB_HOST: postgres-osm
+      OSM_DB_PORT: "5432"
+      PBF_PATH: /data/india.osm.pbf
+    depends_on:
+      postgres-osm:
+        condition: service_healthy
+    restart: "no"
+
+  osm-buildings-importer:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.import-osm-buildings
+    container_name: logistics-osm-buildings-importer
+    volumes:
+      - ./osm-data:/data
+      - ./scripts/import-osm-buildings.py:/import-osm-buildings.py
+    environment:
+      OSM_DB_NAME: osm_india
+      OSM_DB_USER: osm
+      OSM_DB_PASSWORD: osm
+      OSM_DB_HOST: postgres-osm
+      OSM_DB_PORT: "5432"
+      PBF_PATH: /data/india.osm.pbf
+      CITY: delhi
+      FORCE_REIMPORT: "false"
+    depends_on:
+      postgres-osm:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:
+  osm_postgres_data:
