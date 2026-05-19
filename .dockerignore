@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.*
+logs
+coverage
+osm-data
+*.osm.pbf
+*.dump
+*.sql
+*.backup
+.git
+.gitignore
+README.md
