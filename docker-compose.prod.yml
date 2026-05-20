@@ -1,6 +1,7 @@
-# Step 2A: Production Docker Compose (without Nginx)
-# Backend port 3000 is exposed temporarily for local testing.
-# Production will later put Nginx in front and use a .env.production file.
+# Step 2B: Production Docker Compose with Nginx reverse proxy
+# Nginx handles ingress on port 80, proxies to backend on port 3000.
+# WebSocket upgrades are supported for Socket.IO at /socket.io/.
+# Backend is not directly exposed to the host.
 
 services:
   postgres-app:
@@ -57,6 +58,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: pruned
     container_name: logistics-prisma-migrate
     restart: "no"
     depends_on:
@@ -66,10 +68,25 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres-app:5432/logistics_app
     command: ["npx", "prisma", "migrate", "deploy"]
 
+  demo-seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: seed
+    container_name: logistics-demo-seed
+    restart: "no"
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres-app:5432/logistics_app
+    command: ["npm", "run", "seed:demo"]
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+      target: pruned
     container_name: logistics-backend
     restart: unless-stopped
     depends_on:
@@ -79,8 +96,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "3000:3000"
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -91,6 +106,17 @@ services:
       CORS_ORIGINS: http://localhost:5173
       OSRM_URL: https://router.project-osrm.org
       ENABLE_TRACKING_SIMULATOR: "true"
+
+  nginx:
+    image: nginx:alpine
+    container_name: logistics-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
 
 volumes:
   postgres_app_data:
