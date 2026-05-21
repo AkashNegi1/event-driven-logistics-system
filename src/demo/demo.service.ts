@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service.js';
+import { randomBytes } from 'node:crypto';
 import {
   OrderStatus,
   PaymentStatus,
   DriverStatus,
+  DriverRole,
   AssignmentStatus,
   AssignmentType,
 } from '../../generated/prisma/client.js';
@@ -242,10 +244,26 @@ export class DemoService {
   }
 
   async createCustomDemoOrder(input: CustomDemoOrderInput) {
+    await this.cleanupExpiredCustomDemoOrders();
+
     const demoUser = await this.prisma.user.findFirst({ where: { email: 'akash@example.com' } });
     if (!demoUser) {
       throw new NotFoundException('Demo user not found. Run seed first.');
     }
+
+    const suffix = randomBytes(4).toString('hex');
+
+    const driver = await this.prisma.driver.create({
+      data: {
+        name: `Demo Driver ${suffix}`,
+        email: `demo-driver-${suffix}@demo.local`,
+        password: 'hashedpassword',
+        status: DriverStatus.ASSIGNED,
+        role: DriverRole.DELIVERY,
+        lat: input.pickup.lat,
+        lng: input.pickup.lng,
+      },
+    });
 
     const order = await this.prisma.order.create({
       data: {
@@ -259,7 +277,24 @@ export class DemoService {
       },
     });
 
-    await this.assignDemoDriver(order.id);
+    await this.prisma.assignment.create({
+      data: {
+        orderId: order.id,
+        driverId: driver.id,
+        type: AssignmentType.DELIVERY,
+        status: AssignmentStatus.ASSIGNED,
+      },
+    });
+
+    const avgSpeedKmh = 30;
+    const distanceKm = this.haversine(
+      input.pickup.lat,
+      input.pickup.lng,
+      input.destination.lat,
+      input.destination.lng,
+    );
+    const eta = new Date(Date.now() + (distanceKm / avgSpeedKmh) * 3600000);
+    await this.prisma.order.update({ where: { id: order.id }, data: { eta } });
 
     return {
       orderId: order.id,
@@ -274,6 +309,48 @@ export class DemoService {
         lat: input.destination.lat,
         lng: input.destination.lng,
       },
+      driverId: driver.id,
+      driverName: driver.name,
     };
+  }
+
+  async cleanupExpiredCustomDemoOrders() {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const demoDrivers = await this.prisma.driver.findMany({
+      where: {
+        email: { endsWith: '@demo.local' },
+        NOT: { email: 'driver1@example.com' },
+        createdAt: { lt: cutoff },
+      },
+      include: {
+        assignments: {
+          include: { order: true },
+        },
+      },
+    });
+
+    for (const driver of demoDrivers) {
+      if (driver.email === 'demo-driver-1@demo.local') continue;
+
+      for (const assignment of driver.assignments) {
+        const order = assignment.order;
+
+        const isSharedDemo = DEMO_ORDERS.some(
+          (d) =>
+            Math.abs(order.pickupLat - d.pickup.lat) < 0.01 &&
+            Math.abs(order.pickupLng - d.pickup.lng) < 0.01 &&
+            Math.abs(order.deliveryLat - d.destination.lat) < 0.01 &&
+            Math.abs(order.deliveryLng - d.destination.lng) < 0.01,
+        );
+        if (isSharedDemo) continue;
+
+        await this.prisma.trackingEvent.deleteMany({ where: { orderId: order.id } });
+        await this.prisma.assignment.deleteMany({ where: { orderId: order.id } });
+        await this.prisma.order.delete({ where: { id: order.id } });
+      }
+
+      await this.prisma.driver.delete({ where: { id: driver.id } });
+    }
   }
 }
