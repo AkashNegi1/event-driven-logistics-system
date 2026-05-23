@@ -236,26 +236,200 @@ If OSRM fails, the backend keeps fallback behavior so the demo does not complete
 ---
 
 ## High-Level Architecture
+```mermaid
+flowchart TB
+    %% =======================
+    %% USER / CLIENT LAYER
+    %% =======================
+    subgraph Client["🧑‍💻 Client Layer"]
+        User["User / Recruiter"]
+        Browser["Vercel Frontend<br/>React + TypeScript + Three.js/R3F"]
+        UI1["Route Overview<br/>Command Map View"]
+        UI2["Truck Local<br/>3D Local City View"]
+        UI3["Create & Track Demo Order"]
+        UI4["Use Demo Order"]
 
-    Frontend 3D Dashboard
-    React + Vite + Three.js + Zustand
-            |
-            | HTTP + Socket.IO
-            v
-    NestJS Backend
-            |
-            |-- PostgreSQL + Prisma
-            |     Users, orders, drivers, shipments, tracking events
-            |
-            |-- Redis
-            |     Cache, pub/sub, simulator support
-            |
-            |-- PostGIS OSM Database
-            |     Roads, places, POIs, buildings
-            |
-            |-- OSRM
-                  Route calculation
+        User --> Browser
+        Browser --> UI1
+        Browser --> UI2
+        Browser --> UI3
+        Browser --> UI4
+    end
 
+    %% =======================
+    %% DEPLOYMENT / EDGE
+    %% =======================
+    subgraph Edge["🌐 Deployment / Edge"]
+        Vercel["Vercel<br/>Frontend Hosting"]
+        Nginx["Nginx Reverse Proxy<br/>HTTPS + WebSocket Upgrade"]
+        SSL["Let's Encrypt SSL<br/>sslip.io HTTPS"]
+    end
+
+    Browser -->|HTTPS REST API| Nginx
+    Browser -->|Socket.IO WebSocket| Nginx
+    Vercel -. hosts .-> Browser
+    SSL -. certs .-> Nginx
+
+    %% =======================
+    %% BACKEND
+    %% =======================
+    subgraph Backend["🚀 AWS EC2 Backend Stack"]
+        Nest["NestJS Backend<br/>TypeScript"]
+        DemoModule["Demo Module<br/>Shared Demo + Custom Demo Orders"]
+        TrackingModule["Tracking Module<br/>Order Tracking + Simulator"]
+        MapModule["Map Module<br/>Route Context + Local Map APIs"]
+        Gateway["Socket.IO Gateway<br/>Order Rooms"]
+        Prisma["Prisma ORM"]
+    end
+
+    Nginx -->|Proxy HTTP| Nest
+    Nginx -->|Proxy /socket.io| Gateway
+
+    Nest --> DemoModule
+    Nest --> TrackingModule
+    Nest --> MapModule
+    Nest --> Prisma
+    TrackingModule --> Gateway
+
+    %% =======================
+    %% DATA LAYER
+    %% =======================
+    subgraph Data["🗄️ Data Layer"]
+        Postgres["PostgreSQL<br/>Users, Orders, Drivers, Assignments, Tracking Events"]
+        PostGIS["PostGIS OSM Database<br/>osm_roads, osm_places, osm_pois, osm_buildings"]
+        Redis["Redis<br/>Live location cache + Pub/Sub"]
+    end
+
+    Prisma --> Postgres
+    MapModule --> PostGIS
+    TrackingModule --> Redis
+    Gateway --> Redis
+
+    %% =======================
+    %% EXTERNAL MAP / ROUTING
+    %% =======================
+    subgraph External["🗺️ External / Fallback Services"]
+        OSRM["OSRM Public Router<br/>Route Geometry"]
+        Overpass["Overpass API<br/>Fallback OSM Data"]
+    end
+
+    MapModule -->|Fetch route geometry| OSRM
+    MapModule -. fallback only .-> Overpass
+
+    %% =======================
+    %% REAL-TIME TRACKING FLOW
+    %% =======================
+    subgraph Realtime["⚡ Real-Time Flow"]
+        Simulator["Demo Simulator<br/>Driver Location Generator"]
+        DriverLocation["Driver Location Update"]
+        OrderRoom["Socket.IO Room<br/>room: orderId"]
+        LiveUpdate["locationUpdate Event"]
+    end
+
+    TrackingModule --> Simulator
+    Simulator --> DriverLocation
+    DriverLocation --> Redis
+    Redis --> Gateway
+    Gateway --> OrderRoom
+    OrderRoom --> LiveUpdate
+    LiveUpdate --> Browser
+
+    %% =======================
+    %% DEMO FLOWS
+    %% =======================
+    subgraph DemoFlows["🎮 Demo Modes"]
+        SharedDemo["Use Demo Order<br/>Shared recruiter demo<br/>View-only by default"]
+        CustomDemo["Create & Track Demo Order<br/>Unique demo order + unique demo driver"]
+        AdminDemo["?adminDemo=true<br/>Private simulator control"]
+    end
+
+    UI4 --> SharedDemo
+    UI3 --> CustomDemo
+    Browser -. private control .-> AdminDemo
+
+    SharedDemo --> DemoModule
+    CustomDemo --> DemoModule
+    AdminDemo --> TrackingModule
+
+    DemoModule -->|Create/Fetch Demo Order| Postgres
+    DemoModule -->|Assign Demo Driver| Postgres
+    TrackingModule -->|Start / Stop Simulator| Simulator
+
+    %% =======================
+    %% FRONTEND STATE / RENDERING
+    %% =======================
+    subgraph FrontendState["🎨 Frontend State + 3D Rendering"]
+        Zustand["Zustand Stores<br/>trackingStore, routeStore, localMapStore"]
+        RouteContext["Route Context Loader"]
+        LocalMap["Local Map Loader<br/>roads/buildings/POIs"]
+        FallbackBuildings["Procedural Fallback Buildings<br/>Frontend-only"]
+        ThreeScene["Three.js Scene<br/>Truck, Roads, Buildings, Route"]
+    end
+
+    Browser --> Zustand
+    Zustand --> RouteContext
+    Zustand --> LocalMap
+    LocalMap --> FallbackBuildings
+    RouteContext --> ThreeScene
+    LocalMap --> ThreeScene
+    FallbackBuildings --> ThreeScene
+    ThreeScene --> UI1
+    ThreeScene --> UI2
+
+    %% =======================
+    %% API ROUTES
+    %% =======================
+    subgraph APIs["🔌 Key API Endpoints"]
+        API1["POST /demo/order"]
+        API2["GET /demo/orders"]
+        API3["GET /demo/tracking/:orderId"]
+        API4["POST /tracking/:orderId/simulator/start"]
+        API5["POST /tracking/:orderId/simulator/stop"]
+        API6["POST /map/route-context"]
+        API7["GET /map/local"]
+        API8["GET /map/osm/health"]
+        API9["GET /health"]
+    end
+
+    Browser --> API1
+    Browser --> API2
+    Browser --> API3
+    Browser --> API4
+    Browser --> API5
+    Browser --> API6
+    Browser --> API7
+    Browser --> API8
+    Browser --> API9
+
+    API1 --> Nest
+    API2 --> Nest
+    API3 --> Nest
+    API4 --> Nest
+    API5 --> Nest
+    API6 --> Nest
+    API7 --> Nest
+    API8 --> Nest
+    API9 --> Nest
+
+    %% =======================
+    %% STYLING
+    %% =======================
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#111827;
+    classDef backend fill:#dcfce7,stroke:#16a34a,color:#111827;
+    classDef data fill:#fef3c7,stroke:#d97706,color:#111827;
+    classDef external fill:#fee2e2,stroke:#dc2626,color:#111827;
+    classDef realtime fill:#ede9fe,stroke:#7c3aed,color:#111827;
+    classDef deploy fill:#e0f2fe,stroke:#0284c7,color:#111827;
+    classDef api fill:#f3f4f6,stroke:#4b5563,color:#111827;
+
+    class User,Browser,UI1,UI2,UI3,UI4,Zustand,RouteContext,LocalMap,FallbackBuildings,ThreeScene client;
+    class Nest,DemoModule,TrackingModule,MapModule,Gateway,Prisma backend;
+    class Postgres,PostGIS,Redis data;
+    class OSRM,Overpass external;
+    class Simulator,DriverLocation,OrderRoom,LiveUpdate realtime;
+    class Vercel,Nginx,SSL deploy;
+    class API1,API2,API3,API4,API5,API6,API7,API8,API9 api;
+``` 
 ---
 
 ## Backend Modules
